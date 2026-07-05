@@ -11,6 +11,7 @@ EMAIL = "24f2000931@ds.study.iitm.ac.in"
 # Add your exam/grader origin here if it is provided by your course.
 allowed_origins = [
     "https://app-oy207o.example.com",
+    "https://exam.sanand.workers.dev",
 ]
 
 app.add_middleware(
