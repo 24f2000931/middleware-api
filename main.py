@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uuid
@@ -8,7 +8,7 @@ app = FastAPI()
 
 EMAIL = "24f2000931@ds.study.iitm.ac.in"
 
-# Add your exam/grader origin here if it is provided by your course.
+# Allowed origins
 allowed_origins = [
     "https://app-oy207o.example.com",
     "https://exam.sanand.workers.dev",
@@ -22,15 +22,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Stores rate-limit information
-clients = {}
-
+# Rate limiter configuration
 LIMIT = 11
-WINDOW = 10
+WINDOW = 10  # seconds
+
+# client_id -> list of request timestamps
+clients = {}
 
 
 @app.middleware("http")
 async def request_context(request: Request, call_next):
+    # Use incoming request ID if present
     request_id = request.headers.get("X-Request-ID")
 
     if not request_id:
@@ -40,6 +42,7 @@ async def request_context(request: Request, call_next):
 
     response = await call_next(request)
 
+    # Always echo request ID in response header
     response.headers["X-Request-ID"] = request_id
 
     return response
@@ -47,32 +50,52 @@ async def request_context(request: Request, call_next):
 
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
-    client = request.headers.get("X-Client-Id", "anonymous")
-
+    client_id = request.headers.get("X-Client-Id", "anonymous")
     now = time.time()
 
-    if client not in clients:
-        clients[client] = []
+    if client_id not in clients:
+        clients[client_id] = []
 
-    clients[client] = [
-        t for t in clients[client]
+    # Remove timestamps older than WINDOW seconds
+    clients[client_id] = [
+        t for t in clients[client_id]
         if now - t < WINDOW
     ]
 
-    if len(clients[client]) >= LIMIT:
-        return JSONResponse(
+    # Reject if limit exceeded
+    if len(clients[client_id]) >= LIMIT:
+        response = JSONResponse(
             status_code=429,
-            content={"detail": "Rate limit exceeded"}
+            content={"detail": "Rate limit exceeded"},
         )
+        response.headers["X-Request-ID"] = getattr(
+            request.state,
+            "request_id",
+            str(uuid.uuid4())
+        )
+        return response
 
-    clients[client].append(now)
+    clients[client_id].append(now)
 
     return await call_next(request)
 
 
+@app.options("/ping")
+async def options_ping():
+    return Response(status_code=200)
+
+
 @app.get("/ping")
-async def ping(request: Request):
+async def ping(request: Request, response: Response):
+    # Echo request ID in response header
+    response.headers["X-Request-ID"] = request.state.request_id
+
     return {
         "email": EMAIL,
-        "request_id": request.state.request_id
+        "request_id": request.state.request_id,
     }
+
+
+@app.get("/")
+async def root():
+    return {"status": "ok"}
